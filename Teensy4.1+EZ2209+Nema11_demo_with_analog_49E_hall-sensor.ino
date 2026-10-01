@@ -4,13 +4,39 @@
 
 #include <TMCStepper.h>
 
-// ================= Geschwindigkeiten (U/min, 1 U = 1 mm) =================
-#define HOME_RPM     60      // Referenzfahrt: Anfahrt und Freifahren (1 mm/s)
-#define CREEP_RPM    30      // Kriechgang mit reduziertem Strom (0,5 mm/s)
-#define START_RPM    200     // Start-/Stoppdrehzahl der Rampe
-#define CRUISE_RPM   1400    // Reisegeschwindigkeit
-#define ACCEL_RPM_S  900     // Beschleunigung / Verzoegerung in U/min pro s
-// =========================================================================
+// ============== Bewegungsprofile: Drehzahl (U/min, 1 U = 1 mm) + Strom (mA) ==============
+#define MOTOR_MAX_MA  800    // Grenzwert Motor (28HD1411-02)
+
+// Referenzfahrt: Anfahrt zum Magnetfeld und Freifahren
+#define HOME_RPM      60
+#define HOME_MA       800
+
+// Kriechgang: Anschlag suchen, Motor soll am Anschlag durchrutschen
+#define CREEP_RPM     30
+#define CREEP_MA      200
+
+// Fahrt: Reisegeschwindigkeit
+#define CRUISE_RPM    1400
+#define CRUISE_MA     800
+
+// Rampe und Stillstand
+#define START_RPM     200    // Start-/Stoppdrehzahl der Rampe
+#define ACCEL_RPM_S   900    // Beschleunigung / Verzoegerung in U/min pro s
+#define HOLD_FACTOR   0.3    // Haltestrom = 30 % des jeweiligen Fahrstroms
+
+// ============== Fahrweg (mm) ==============
+#define SAFETY_ZERO_MM 1.0   // Abstand Nullpunkt <- mechanischer Anschlag (Sensorseite)
+#define SAFETY_MAX_MM  1.0   // Abstand MAX -> mechanischer Anschlag (Gegenseite)
+#define TRAVEL_MM      137.0 // nutzbarer Weg zwischen 0 und MAX
+// ==========================================================================================
+
+#if HOME_MA > MOTOR_MAX_MA || CREEP_MA > MOTOR_MAX_MA || CRUISE_MA > MOTOR_MAX_MA
+#error "Strom ueber MOTOR_MAX_MA"
+#endif
+
+// Abgeleitete Werte
+#define MAX_POS_MM      TRAVEL_MM
+#define MECH_STROKE_MM  (SAFETY_ZERO_MM + TRAVEL_MM + SAFETY_MAX_MM)  // Anschlag bis Anschlag
 
 // Pins
 #define STEP_PIN 2
@@ -22,8 +48,6 @@
 // Treiber
 #define R_SENSE      0.11f
 #define DRIVER_ADDR  0
-#define MOTOR_MA     800     // Motor max. 800 mA
-#define HOME_SOFT_MA 200     // reduzierter Strom im Kriechgang -> rutscht am Anschlag durch
 #define MICROSTEPS   4
 
 // Mechanik
@@ -46,20 +70,15 @@
 #define HALL_DETECT_DEV  20    // Abweichung, ab der Kriechgang beginnt
 #define HALL_PLATEAU_MIN 540   // Anschlag nur in diesem Wertebereich akzeptieren
 #define HALL_PLATEAU_MAX 800
-#define TICK_MM          0.5   // Messintervall im Kriechgang
+#define TICK_MM          0.2   // Messintervall im Kriechgang
 #define PLATEAU_TOL      3     // max. Aenderung je Tick = "steht"
 #define PLATEAU_TICKS    5     // so viele ruhige Ticks in Folge
 
-// Referenzfahrt
-#define SAFETY_MM      1.0   // Nullpunkt liegt 1 mm vor dem Anschlag
-#define HYST_CLEAR_MM  15.0  // Zusatzweg nach dem Freifahren
-#define HOME_MAX_MM    170.0 // Abbruch, falls kein Magnetfeld erkannt wird
-#define FREE_MAX_MM    40.0  // max. Weg zum Freifahren
-#define SOFT_MAX_MM    25.0  // max. Weg im Kriechgang
-
-// Fahrweg
-#define TRAVEL_TOTAL_MM 138.0                          // ab Nullpunkt bis zum Anschlag
-#define MAX_POS_MM      (TRAVEL_TOTAL_MM - SAFETY_MM)  // nutzbare Obergrenze = 137 mm
+// Referenzfahrt-Grenzen
+#define HYST_CLEAR_MM  15.0                    // Zusatzweg nach dem Freifahren
+#define HOME_MAX_MM    (MECH_STROKE_MM + 10.0) // Abbruch, falls kein Magnetfeld erkannt wird
+#define FREE_MAX_MM    40.0                    // max. Weg zum Freifahren
+#define SOFT_MAX_MM    25.0                    // max. Weg im Kriechgang
 
 // Sonstiges
 #define PAUSE_MS     500
@@ -84,6 +103,9 @@ int hallLimitDev  = 0;              // Notstopp-Schwelle (0 = aus)
 uint32_t mmToSteps(float mm)  { return (uint32_t)(mm * STEPS_PER_MM + 0.5f); }
 float    stepsToMM(int32_t s) { return (float)s / STEPS_PER_MM; }
 float    getPositionMM()      { return stepsToMM(posSteps); }
+
+// ---------- Strom ----------
+void setCurrent(uint16_t ma) { driver->rms_current(ma, HOLD_FACTOR); }
 
 // ---------- Hallsensor ----------
 int readHall() { return analogRead(HALL_PIN); }   // Hardware-Mittelung aktiv
@@ -159,7 +181,7 @@ void stepOnce(uint32_t pauseUs) {
 bool runMM(float mm, bool towardMax);   // vorwaerts deklariert
 
 bool homingFail(const char *msg) {
-  driver->rms_current(MOTOR_MA, 0.3);  // vollen Strom wiederherstellen
+  setCurrent(CRUISE_MA);
   Serial.println(msg);
   return false;
 }
@@ -168,7 +190,8 @@ bool homingFail(const char *msg) {
 bool homing() {
   Serial.println("Referenzfahrt startet...");
   hallLimitDev = 0;                     // Endzonen-Ueberwachung aus
-  driver->rms_current(MOTOR_MA, 0.3);
+  setCurrent(HOME_MA);
+  delay(20);
 
   // 1) Steht der Schlitten bereits im Magnetfeld? -> Richtung MAX freifahren
   if (abs(readHallAvg(16) - HALL_IDLE_NOM) > HALL_DETECT_DEV) {
@@ -189,7 +212,7 @@ bool homing() {
   hallBaseline = readHallAvg(64);
   Serial.print("Hall-Ruhewert: "); Serial.println(hallBaseline);
 
-  // 3) Anfahrt mit vollem Strom, bis das Magnetfeld erkannt wird
+  // 3) Anfahrt, bis das Magnetfeld erkannt wird
   setDirection(false);
   delay(5);
   uint32_t n = 0;
@@ -197,10 +220,10 @@ bool homing() {
     if (++n > mmToSteps(HOME_MAX_MM)) return homingFail("FEHLER: Magnetfeld nicht gefunden");
     stepOnce(HOME_DELAY_US);
   }
-  Serial.println("Magnetfeld erkannt - Strom reduziert, Kriechgang");
+  Serial.println("Magnetfeld erkannt - Kriechgang");
 
   // 4) Kriechgang mit reduziertem Strom, bis sich der Sensorwert nicht mehr aendert
-  driver->rms_current(HOME_SOFT_MA, 0.5);
+  setCurrent(CREEP_MA);
   delay(20);
 
   const uint32_t tickSteps = mmToSteps(TICK_MM);
@@ -243,20 +266,20 @@ bool homing() {
     }
   }
 
-  // 5) Anschlag erreicht -> Referenzwert speichern, vollen Strom zurueck
+  // 5) Anschlag erreicht -> Referenzwert speichern, Fahrstrom setzen
   hallRefValue = readHallAvg(64);
-  driver->rms_current(MOTOR_MA, 0.3);
+  setCurrent(CRUISE_MA);
   delay(50);
   Serial.print("Anschlag erkannt, Hall-Referenz: "); Serial.println(hallRefValue);
 
-  // Schlitten steht am Anschlag = -SAFETY_MM
-  noInterrupts(); posSteps = -(int32_t)mmToSteps(SAFETY_MM); interrupts();
+  // Schlitten steht am Anschlag = -SAFETY_ZERO_MM
+  noInterrupts(); posSteps = -(int32_t)mmToSteps(SAFETY_ZERO_MM); interrupts();
   homed = true;
 
   if (!vmOk()) { emergencyStop("VM ausgefallen"); return false; }
 
-  // 6) 1 mm Richtung MAX auf den Nullpunkt
-  if (!runMM(SAFETY_MM, true)) return false;
+  // 6) Sicherheitsabstand Richtung MAX auf den Nullpunkt
+  if (!runMM(SAFETY_ZERO_MM, true)) return false;
   delay(50);
 
   hallZeroValue = readHallAvg(64);
@@ -270,8 +293,10 @@ bool homing() {
   Serial.print("Nullpunkt gesetzt, Position: ");
   Serial.print(getPositionMM(), 3); Serial.print(" mm | Hall Null: ");
   Serial.print(hallZeroValue); Serial.print(" | Notstopp ab Abweichung: ");
-  Serial.print(hallLimitDev); Serial.print(" | nutzbar bis ");
-  Serial.print(MAX_POS_MM, 1); Serial.println(" mm");
+  Serial.println(hallLimitDev);
+  Serial.print("Fahrweg 0 ... "); Serial.print(MAX_POS_MM, 1);
+  Serial.print(" mm | Anschlag bis Anschlag: "); Serial.print(MECH_STROKE_MM, 1);
+  Serial.println(" mm");
   return true;
 }
 
@@ -362,7 +387,7 @@ void configureDriver() {
   driver->I_scale_analog(false);
   driver->toff(4);
   driver->blank_time(24);
-  driver->rms_current(MOTOR_MA, 0.3);   // Haltestrom 30 %
+  setCurrent(CRUISE_MA);
   driver->iholddelay(6);
   driver->TPOWERDOWN(10);
   driver->microsteps(MICROSTEPS);
@@ -446,7 +471,7 @@ void loop() {
 
   digitalWrite(LED_PIN, HIGH);
 
-  // Pendeln ueber die volle nutzbare Strecke: 0 -> 137 mm -> 0
+  // Pendeln ueber die volle nutzbare Strecke: 0 -> MAX -> 0
   if (!moveToMM(MAX_POS_MM)) { digitalWrite(LED_PIN, LOW); return; }
   report("nach Max");
   delay(PAUSE_MS);
