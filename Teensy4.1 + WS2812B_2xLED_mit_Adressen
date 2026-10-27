@@ -1,0 +1,50 @@
+// created by Sergej Kolmogorov, Instagram: https://www.instagram.com/sergej.kolmogorov/
+// YouTube: https://www.youtube.com/@SergejKolmogorov
+// Code is free to use after subscribing my channel =)
+
+#include <Adafruit_NeoPixel.h>
+
+#define LED_PIN    8
+#define LED_COUNT  2
+
+Adafruit_NeoPixel strip(LED_COUNT, LED_PIN, NEO_GRB + NEO_KHZ800);
+
+void setup() {
+  strip.begin();
+  strip.setBrightness(50);   // 0–255
+  strip.show();              // alle LEDs aus
+}
+
+void loop() {
+  // Beide LEDs einzeln adressiert
+  strip.setPixelColor(0, strip.Color(255, 0, 0));   // LED 1: Rot
+  strip.setPixelColor(1, strip.Color(0, 0, 255));   // LED 2: Blau
+  strip.show();
+  delay(1000);
+
+  strip.setPixelColor(0, strip.Color(0, 255, 0));   // LED 1: Grün
+  strip.setPixelColor(1, strip.Color(255, 255, 0)); // LED 2: Gelb
+  strip.show();
+  delay(1000);
+
+  // Lauflicht: abwechselnd an
+  for (int i = 0; i < 3; i++) {
+    strip.clear();
+    strip.setPixelColor(0, strip.Color(255, 255, 255));
+    strip.show();
+    delay(300);
+
+    strip.clear();
+    strip.setPixelColor(1, strip.Color(255, 255, 255));
+    strip.show();
+    delay(300);
+  }
+
+  // Regenbogen, zweite LED um 180° versetzt
+  for (uint16_t hue = 0; hue < 65535; hue += 256) {
+    strip.setPixelColor(0, strip.gamma32(strip.ColorHSV(hue)));
+    strip.setPixelColor(1, strip.gamma32(strip.ColorHSV(hue + 32768)));
+    strip.show();
+    delay(5);
+  }
+}
