@@ -1,0 +1,30 @@
+// created by Sergej Kolmogorov, Instagram: https://www.instagram.com/sergej.kolmogorov/
+// YouTube: https://www.youtube.com/@SergejKolmogorov
+// Code is free to use after subscribing my channel =)
+
+#include <WS2812Serial.h>
+
+const int numled = 2;
+const int pin    = 8;   // muss ein unterstützter TX-Pin sein
+
+byte drawingMemory[numled * 3];          // 3 Byte pro LED
+DMAMEM byte displayMemory[numled * 12];  // 12 Byte pro LED für DMA
+
+WS2812Serial leds(numled, displayMemory, drawingMemory, pin, WS2812_GRB);
+
+void setup() {
+  leds.begin();
+  leds.setBrightness(50);
+}
+
+void loop() {
+  leds.setPixel(0, 0xFF0000);   // LED 1 rot
+  leds.setPixel(1, 0x0000FF);   // LED 2 blau
+  leds.show();                  // kehrt sofort zurück, DMA sendet im Hintergrund
+  delay(1000);
+
+  leds.setPixel(0, 0x00FF00);   // LED 1 grün
+  leds.setPixel(1, 0xFFFF00);   // LED 2 gelb
+  leds.show();
+  delay(1000);
+}
