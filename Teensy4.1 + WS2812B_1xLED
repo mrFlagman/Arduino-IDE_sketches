@@ -1,0 +1,37 @@
+// created by Sergej Kolmogorov, Instagram: https://www.instagram.com/sergej.kolmogorov/
+// YouTube: https://www.youtube.com/@SergejKolmogorov
+// Code is free to use after subscribing my channel =)
+
+#include <Adafruit_NeoPixel.h>
+
+#define LED_PIN    6
+#define LED_COUNT  1
+
+Adafruit_NeoPixel strip(LED_COUNT, LED_PIN, NEO_GRB + NEO_KHZ800);
+
+void setup() {
+  strip.begin();
+  strip.setBrightness(50);   // 0–255
+  strip.show();              // LED aus
+}
+
+void loop() {
+  strip.setPixelColor(0, strip.Color(255, 0, 0));   // Rot
+  strip.show();
+  delay(500);
+
+  strip.setPixelColor(0, strip.Color(0, 255, 0));   // Grün
+  strip.show();
+  delay(500);
+
+  strip.setPixelColor(0, strip.Color(0, 0, 255));   // Blau
+  strip.show();
+  delay(500);
+
+  // Regenbogen-Übergang
+  for (uint16_t hue = 0; hue < 65535; hue += 256) {
+    strip.setPixelColor(0, strip.gamma32(strip.ColorHSV(hue)));
+    strip.show();
+    delay(5);
+  }
+}
